@@ -1,0 +1,10 @@
+# .dev.vars.example
+# Copy this file to .dev.vars and fill in your real values.
+# NEVER commit .dev.vars to git — it contains your real secrets.
+
+GITHUB_TOKEN=github_pat_YOUR_TOKEN_HERE
+REPOS=owner/repo1,owner/repo2
+SLACK_TOKEN=xoxb-YOUR_SLACK_BOT_TOKEN
+SLACK_CHANNEL=C0YOURCHANNEL
+NOTION_KEY=ntn_YOUR_NOTION_SECRET
+NOTION_PAGE_ID=YOUR_NOTION_PAGE_ID

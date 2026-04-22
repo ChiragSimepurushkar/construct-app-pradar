@@ -1,0 +1,22 @@
+# .gitignore for PRadar
+
+# Local dev secrets — NEVER commit these
+.dev.vars
+*.vars
+
+# Wrangler build output
+.wrangler/
+dist/
+worker-configuration.d.ts
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

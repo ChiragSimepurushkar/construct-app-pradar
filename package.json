@@ -1,0 +1,21 @@
+{
+  "name": "construct-app-pradar",
+  "version": "1.0.0",
+  "description": "PRadar — PR review standup intelligence for your team",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@construct-computer/app-sdk": "^0.2.6",
+    "@octokit/rest": "^21.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.83.0"
+  }
+}

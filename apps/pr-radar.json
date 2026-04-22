@@ -1,0 +1,11 @@
+{
+  "repo": "https://github.com/ChiragSimepurushkar/PRadar",
+  "description": "Autonomous PR review intelligence: auto-assigns reviewers, grades code risk, drafts AI fixes for GitHub issues via Construct Kimi 2.6, and posts standup digests to Slack & Notion.",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "commit": "034c67c2",
+      "date": "2026-04-22"
+    }
+  ]
+}

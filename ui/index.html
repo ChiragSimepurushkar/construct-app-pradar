@@ -1,0 +1,1603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PRadar — PR Review Intelligence</title>
+  <meta name="description" content="PRadar surfaces your team's full PR review queue every morning, before standup starts.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/sdk/construct.css">
+  <style>
+    :root {
+      --bg: #0d0d0f;
+      --bg2: #14141a;
+      --bg3: #1a1a24;
+      --border: #2a2a38;
+      --border2: #333344;
+      --green: #00e5a0;
+      --green-dim: rgba(0, 229, 160, 0.12);
+      --amber: #f59e0b;
+      --amber-dim: rgba(245, 158, 11, 0.12);
+      --red: #ef4444;
+      --red-dim: rgba(239, 68, 68, 0.12);
+      --text: #c8c8d8;
+      --text-dim: #6a6a84;
+      --text-faint: #3a3a52;
+      --mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--mono);
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Scanline overlay ─────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── Header bar ───────────────────────────────────── */
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+      flex-shrink: 0;
+    }
+
+    #app-name {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--green);
+      letter-spacing: -0.5px;
+    }
+
+    #cursor {
+      display: inline-block;
+      width: 2px;
+      height: 18px;
+      background: var(--green);
+      vertical-align: middle;
+      margin-left: 2px;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    #scan-info {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-align: right;
+    }
+
+    #status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      padding: 3px 10px;
+      border-radius: 3px;
+      border: 1px solid;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-top: 4px;
+    }
+
+    #status-pill.nominal {
+      color: var(--green);
+      border-color: rgba(0,229,160,0.3);
+      background: var(--green-dim);
+    }
+
+    #status-pill.scanning {
+      color: var(--amber);
+      border-color: rgba(245,158,11,0.3);
+      background: var(--amber-dim);
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    #status-pill.error {
+      color: var(--red);
+      border-color: rgba(239,68,68,0.3);
+      background: var(--red-dim);
+    }
+
+    #status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* ── Main bento grid ──────────────────────────────── */
+    #main {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 0;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Left panel ───────────────────────────────────── */
+    #panel-left {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      /* custom scrollbar */
+      scrollbar-width: thin;
+      scrollbar-color: var(--border2) transparent;
+    }
+
+    .panel-label {
+      font-size: 9px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      padding: 12px 16px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat-card {
+      padding: 16px 12px;
+      text-align: center;
+      border-right: 1px solid var(--border);
+      transition: background 0.2s;
+    }
+
+    .stat-card:last-child { border-right: none; }
+    .stat-card:hover { background: var(--bg3); }
+
+    .stat-num {
+      font-size: 32px;
+      font-weight: 600;
+      line-height: 1;
+      margin-bottom: 4px;
+      transition: color 0.3s;
+    }
+
+    .stat-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-dim);
+    }
+
+    /* Repos section */
+    #repos-section {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #repos-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-faint);
+      margin-bottom: 8px;
+    }
+
+    #repos-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .repo-tag {
+      font-size: 10px;
+      padding: 2px 8px;
+      border: 1px solid var(--border2);
+      border-radius: 2px;
+      color: var(--text-dim);
+      background: var(--bg3);
+    }
+
+    /* Legend section */
+    #legend {
+      padding: 12px 16px;
+      flex-shrink: 0;
+    }
+
+    #legend-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-faint);
+      margin-bottom: 8px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* Action buttons */
+    #actions {
+      margin-top: auto;
+      padding: 14px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 10px 14px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .05em;
+      border: 1px solid;
+      border-radius: 2px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: currentColor;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+
+    .btn:active::before { opacity: 0.15; }
+
+    .btn-primary {
+      background: var(--green);
+      color: #0d0d0f;
+      border-color: var(--green);
+    }
+
+    .btn-primary:hover {
+      background: #00ffb3;
+      border-color: #00ffb3;
+      box-shadow: 0 0 12px rgba(0,229,160,0.3);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-dim);
+      border-color: var(--border2);
+    }
+
+    .btn-secondary:hover {
+      color: var(--text);
+      border-color: var(--text-dim);
+      background: var(--bg3);
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* ── Right panel — PR list ────────────────────────── */
+    #panel-right {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #pr-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px 8px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #pr-header-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-faint);
+    }
+
+    #pr-filter {
+      display: flex;
+      gap: 6px;
+    }
+
+    .filter-btn {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .filter-btn.active {
+      color: var(--green);
+      border-color: rgba(0,229,160,0.4);
+      background: var(--green-dim);
+    }
+
+    #pr-list {
+      flex: 1;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+
+    #pr-list::-webkit-scrollbar { width: 4px; }
+    #pr-list::-webkit-scrollbar-track { background: transparent; }
+    #pr-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+    /* Empty / loading states */
+    #pr-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-faint);
+      font-size: 12px;
+      gap: 8px;
+    }
+
+    #pr-empty-icon {
+      font-size: 32px;
+      opacity: 0.3;
+    }
+
+    .pr-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .pr-row:hover {
+      background: var(--bg3);
+    }
+
+    .pr-row:hover .pr-scan-line {
+      opacity: 1;
+    }
+
+    .pr-urgency-bar {
+      width: 3px;
+      height: 36px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .pr-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .pr-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+
+    .pr-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    .pr-repo {
+      padding: 1px 6px;
+      border: 1px solid var(--border2);
+      border-radius: 2px;
+      background: var(--bg3);
+      font-size: 10px;
+    }
+
+    .pr-author {
+      opacity: 0.7;
+    }
+
+    .pr-labels {
+      display: flex;
+      gap: 4px;
+    }
+
+    .pr-label {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+    }
+
+    .pr-wait {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 2px;
+      border: 1px solid;
+      flex-shrink: 0;
+      min-width: 44px;
+      text-align: center;
+    }
+
+    .wait-green { color: var(--green); border-color: rgba(0,229,160,0.3); background: var(--green-dim); }
+    .wait-amber { color: var(--amber); border-color: rgba(245,158,11,0.3); background: var(--amber-dim); }
+    .wait-red   { color: var(--red);   border-color: rgba(239,68,68,0.3);  background: var(--red-dim);   }
+
+    .dot-green { background: var(--green); }
+    .dot-amber { background: var(--amber); }
+    .dot-red   { background: var(--red);   }
+
+    .pr-unassigned-tag {
+      font-size: 9px;
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      padding: 1px 5px;
+      border-radius: 2px;
+    }
+
+    .pr-reviewer-chip {
+      font-size: 9px;
+      color: var(--green);
+      border: 1px solid rgba(0,229,160,0.25);
+      padding: 1px 6px;
+      border-radius: 2px;
+      background: var(--green-dim);
+    }
+
+    .snooze-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 2px 6px;
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--text-dim);
+      flex-shrink: 0;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .pr-row:hover .snooze-btn { opacity: 1; }
+    .snooze-btn:hover { border-color: var(--amber); color: var(--amber); }
+
+    /* ── Risk badges ─────────────────────────────── */
+    .risk-badge {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      padding: 2px 6px;
+      border-radius: 2px;
+      border: 1px solid;
+      flex-shrink: 0;
+      cursor: default;
+      position: relative;
+    }
+
+    .risk-high   { color: #ff4d4d; border-color: rgba(255,77,77,0.35); background: rgba(255,77,77,0.1); }
+    .risk-medium { color: var(--amber); border-color: rgba(245,158,11,0.35); background: var(--amber-dim); }
+    .risk-low    { color: #60a5fa; border-color: rgba(96,165,250,0.35); background: rgba(96,165,250,0.08); }
+
+    .risk-badge .risk-tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: 0;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 8px 10px;
+      width: 240px;
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text);
+      z-index: 50;
+      line-height: 1.5;
+      white-space: normal;
+    }
+
+    .risk-badge:hover .risk-tooltip { display: block; }
+
+    .risk-analyzing {
+      font-size: 9px;
+      color: var(--text-faint);
+      border: 1px dashed var(--border);
+      padding: 2px 6px;
+      border-radius: 2px;
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    /* ── Issue rows ──────────────────────────────── */
+    .issue-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+    .issue-row:hover { background: var(--bg3); }
+
+    .issue-age-bar {
+      width: 3px;
+      height: 36px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .age-fresh  { background: var(--green); }
+    .age-aging  { background: var(--amber); }
+    .age-stale  { background: var(--red); }
+
+    .issue-number {
+      font-size: 10px;
+      color: var(--text-faint);
+      flex-shrink: 0;
+      min-width: 30px;
+    }
+
+    .ai-fix-btn {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 3px 8px;
+      background: rgba(0,229,160,0.08);
+      border: 1px solid rgba(0,229,160,0.3);
+      border-radius: 2px;
+      color: var(--green);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .ai-fix-btn:hover {
+      background: rgba(0,229,160,0.18);
+      box-shadow: 0 0 8px rgba(0,229,160,0.2);
+    }
+    .ai-fix-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .issue-assignee {
+      font-size: 9px;
+      color: var(--green);
+      border: 1px solid rgba(0,229,160,0.2);
+      padding: 1px 5px;
+      border-radius: 2px;
+      background: var(--green-dim);
+    }
+
+    .issue-unassigned {
+      font-size: 9px;
+      color: var(--text-faint);
+    }
+
+    /* ── Toast ────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 10px 16px;
+      font-size: 12px;
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all 0.25s;
+      pointer-events: none;
+      z-index: 100;
+      max-width: 300px;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    #toast.success { border-color: rgba(0,229,160,0.4); color: var(--green); }
+    #toast.error   { border-color: rgba(239,68,68,0.4); color: var(--red); }
+
+    /* ── Health score card ────────────────────────────── */
+    .grade-A { color: var(--green); }
+    .grade-B { color: #4ade80; }
+    .grade-C { color: var(--amber); }
+    .grade-D { color: #fb923c; }
+    .grade-F { color: var(--red); }
+
+    #health-card {
+      grid-column: 1 / -1;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    #health-grade {
+      font-size: 28px;
+      font-weight: 600;
+      line-height: 1;
+      transition: color 0.4s;
+    }
+
+    #health-score-bar {
+      flex: 1;
+      height: 4px;
+      background: var(--bg3);
+      border-radius: 2px;
+      overflow: hidden;
+      margin: 0 10px;
+    }
+
+    #health-score-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--green);
+      width: 0%;
+      transition: width 0.6s ease-out, background 0.4s;
+    }
+
+    #health-msg {
+      font-size: 9px;
+      color: var(--text-dim);
+      text-align: right;
+      max-width: 120px;
+      line-height: 1.4;
+    }
+
+    /* ── Bottom status bar ────────────────────────────── */
+    #bottom-bar {
+      flex-shrink: 0;
+      border-top: 1px solid var(--border);
+      background: var(--bg2);
+      padding: 6px 20px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    .bar-item { display: flex; gap: 5px; }
+    .bar-label { color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
+    .bar-val   { color: var(--text); }
+
+    /* ── Splash Screen ─────────────────────────────── */
+    #splash {
+      position: fixed;
+      inset: 0;
+      background: #0a0e17;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      transition: opacity .6s ease, visibility .6s ease;
+    }
+    #splash.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .splash-logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      animation: splashFadeIn .6s ease both;
+    }
+    @keyframes splashFadeIn {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .splash-icon {
+      width: 80px; height: 80px;
+      background: #131a25;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 40px rgba(0,229,160,.18), inset 0 1px 0 rgba(255,255,255,.06);
+    }
+    /* Radar sweep rotation */
+    @keyframes radarSweep {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .radar-sweep {
+      transform-origin: 40px 40px;
+      animation: radarSweep 2s linear infinite;
+    }
+    .splash-wordmark {
+      display: flex;
+      flex-direction: column;
+    }
+    .splash-title {
+      font-family: var(--mono);
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -.02em;
+    }
+    .splash-title .t-p    { color: #e8eaed; }
+    .splash-title .t-rest { color: var(--green); }
+    .splash-subtitle {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .22em;
+      color: #5a6478;
+      margin-top: 8px;
+    }
+    /* Loading bar */
+    .splash-bar-wrap {
+      width: 220px;
+      height: 2px;
+      background: rgba(255,255,255,.07);
+      border-radius: 2px;
+      overflow: hidden;
+      animation: splashFadeIn .6s ease .3s both;
+    }
+    .splash-bar-fill {
+      height: 100%;
+      background: var(--green);
+      border-radius: 2px;
+      animation: splashLoad 2s cubic-bezier(.4,0,.2,1) forwards;
+    }
+    @keyframes splashLoad {
+      0%  { width: 0%; }
+      60% { width: 72%; }
+      90% { width: 92%; }
+      100%{ width: 100%; }
+    }
+    .splash-hint {
+      font-size: 9px;
+      color: #3a4255;
+      letter-spacing: .12em;
+      animation: splashFadeIn .5s ease .5s both;
+    }
+
+    /* ── Header logo ────────────────────────────── */
+    #header-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #header-icon {
+      width: 36px; height: 36px;
+      background: #131a25;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 12px rgba(0,229,160,.2);
+      flex-shrink: 0;
+    }
+    /* Small header sweep */
+    .hdr-sweep {
+      transform-origin: 18px 18px;
+      animation: radarSweep 2.5s linear infinite;
+    }
+    #header-wordmark { line-height: 1; }
+    #header-pradar {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+    }
+    #header-pradar .t-p    { color: #e8eaed; }
+    #header-pradar .t-rest { color: var(--green); }
+    #header-sub {
+      font-size: 8px;
+      letter-spacing: .18em;
+      color: #4a5568;
+      margin-top: 2px;
+    }
+
+    /* ── Flow Summary View ────────────────────────────── */
+    #flow-view {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .flow-section-title {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--text-faint);
+      margin-bottom: 8px;
+    }
+    /* PR Pipeline stages */
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .pipeline-stage {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 10px;
+      text-align: center;
+      position: relative;
+    }
+    .pipeline-stage::after {
+      content: '→';
+      position: absolute;
+      right: -12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--border2);
+      font-size: 14px;
+    }
+    .pipeline-stage:last-child::after { display: none; }
+    .pipeline-count {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .pipeline-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      color: var(--text-dim);
+    }
+    /* Risk distribution bar */
+    .risk-bar-wrap {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px;
+    }
+    .risk-bar {
+      display: flex;
+      height: 12px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+    .risk-seg { transition: width .5s ease; }
+    .risk-seg-low    { background: var(--green); }
+    .risk-seg-medium { background: var(--amber); }
+    .risk-seg-high   { background: var(--red); }
+    .risk-legend {
+      display: flex;
+      gap: 14px;
+      font-size: 9px;
+      color: var(--text-dim);
+    }
+    .risk-legend span { display: flex; align-items: center; gap: 4px; }
+    .legend-dot-sm { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    /* Repo activity lanes */
+    .repo-lanes { display: flex; flex-direction: column; gap: 8px; }
+    .repo-lane {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .lane-repo-name {
+      font-size: 10px;
+      color: var(--text);
+      min-width: 160px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lane-bar-wrap { flex: 1; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+    .lane-bar-fill { height: 100%; border-radius: 3px; background: var(--green); transition: width .5s ease; }
+    .lane-count { font-size: 10px; color: var(--text-dim); min-width: 30px; text-align: right; }
+    /* Issue summary */
+    .issue-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3,1fr);
+      gap: 8px;
+    }
+    .issue-summary-card {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      text-align: center;
+    }
+    .issue-summary-num {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 3px;
+    }
+    .issue-summary-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text-dim);
+    }
+
+    /* ── Settings Panel ───────────────────────────────── */
+    #settings-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.6);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+    }
+    #settings-overlay.open { display: block; }
+
+    #settings-panel {
+      position: fixed;
+      top: 0; right: -480px;
+      width: 460px;
+      height: 100vh;
+      background: var(--bg2);
+      border-left: 1px solid var(--border2);
+      display: flex;
+      flex-direction: column;
+      z-index: 201;
+      transition: right .3s cubic-bezier(.4,0,.2,1);
+      overflow: hidden;
+    }
+    #settings-panel.open { right: 0; }
+
+    #settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #settings-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--green);
+      letter-spacing: .04em;
+    }
+    #settings-close {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-faint);
+      width: 26px; height: 26px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #settings-close:hover { border-color: var(--red); color: var(--red); }
+
+    #settings-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border2) transparent;
+    }
+
+    /* Config status bar */
+    #cfg-status-bar {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg3);
+    }
+    .cfg-status-chip {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 2px;
+      letter-spacing: .05em;
+    }
+    .cfg-ok  { background: rgba(0,229,160,.15); color: var(--green); border: 1px solid rgba(0,229,160,.3); }
+    .cfg-err { background: rgba(255,77,77,.1);  color: #ff6b6b;       border: 1px solid rgba(255,77,77,.25); }
+
+    /* Settings sections */
+    .settings-section {
+      border-bottom: 1px solid var(--border);
+    }
+    .settings-section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .settings-section-header:hover { background: var(--bg3); }
+    .section-icon { font-size: 14px; }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+      flex: 1;
+    }
+    .section-chevron {
+      font-size: 10px;
+      color: var(--text-faint);
+      transition: transform .2s;
+    }
+    .settings-section.collapsed .section-chevron { transform: rotate(-90deg); }
+    .section-body {
+      padding: 0 20px 16px;
+    }
+    .settings-section.collapsed .section-body { display: none; }
+
+    /* Fields */
+    .field-group {
+      margin-bottom: 14px;
+    }
+    .field-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .field-label a {
+      font-size: 9px;
+      color: var(--green);
+      text-decoration: none;
+      font-weight: 400;
+    }
+    .field-label a:hover { text-decoration: underline; }
+    .cfg-input {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      box-sizing: border-box;
+      transition: border-color .15s;
+    }
+    .cfg-input:focus {
+      outline: none;
+      border-color: var(--green);
+      box-shadow: 0 0 0 2px rgba(0,229,160,.1);
+    }
+    .cfg-input::placeholder { color: var(--text-faint); }
+    .field-hint {
+      font-size: 9px;
+      color: var(--text-faint);
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+    .field-hint a { color: var(--green); text-decoration: none; }
+    .field-hint a:hover { text-decoration: underline; }
+
+    /* Guide boxes */
+    .guide-box {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--amber);
+      border-radius: 4px;
+      padding: 12px 14px;
+      font-size: 10px;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+    .guide-box h4 {
+      font-size: 10px;
+      color: var(--amber);
+      margin: 0 0 8px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .guide-box ol {
+      padding-left: 16px;
+      margin: 0;
+    }
+    .guide-box li { margin-bottom: 4px; }
+    .guide-box code {
+      font-family: var(--mono);
+      background: rgba(255,255,255,.07);
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+    .guide-box .scope-badge {
+      display: inline-block;
+      background: rgba(0,229,160,.15);
+      color: var(--green);
+      border: 1px solid rgba(0,229,160,.3);
+      border-radius: 2px;
+      padding: 1px 5px;
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+
+    /* Settings gear button */
+    #btn-settings {
+      background: transparent;
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      color: var(--text-dim);
+      padding: 4px 8px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all .15s;
+    }
+    #btn-settings:hover { border-color: var(--green); color: var(--green); }
+
+    /* Settings footer */
+    #settings-footer {
+      display: flex;
+      gap: 8px;
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .settings-btn {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      letter-spacing: .04em;
+      transition: all .15s;
+      flex: 1;
+    }
+    .settings-btn-primary {
+      background: var(--green);
+      color: var(--bg);
+      border: none;
+    }
+    .settings-btn-primary:hover { background: #00ffb8; }
+    .settings-btn-secondary {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--border2);
+    }
+    .settings-btn-secondary:hover { border-color: var(--text-dim); color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────── -->
+  <div id="header">
+    <div id="header-logo">
+      <!-- Radar Icon (matches logo design) -->
+      <div id="header-icon">
+        <svg width="24" height="24" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Radar rings -->
+          <circle cx="18" cy="18" r="14" stroke="#1e3a5f" stroke-width="0.8" fill="none"/>
+          <circle cx="18" cy="18" r="9"  stroke="#1e3a5f" stroke-width="0.8" fill="none"/>
+          <circle cx="18" cy="18" r="4"  stroke="#1e3a5f" stroke-width="0.8" fill="none"/>
+          <!-- Cross hairs -->
+          <line x1="18" y1="4"  x2="18" y2="32" stroke="#1a2e45" stroke-width="0.6"/>
+          <line x1="4"  y1="18" x2="32" y2="18" stroke="#1a2e45" stroke-width="0.6"/>
+          <!-- Sweep arm -->
+          <g class="hdr-sweep">
+            <line x1="18" y1="18" x2="30" y2="6" stroke="#00e5a0" stroke-width="1.4" stroke-linecap="round" opacity="0.9"/>
+            <path d="M18 18 L30 6 A17 17 0 0 0 18 1" fill="url(#sweepGradH)" opacity="0.25"/>
+          </g>
+          <!-- Blips -->
+          <circle cx="24" cy="12" r="1.4" fill="#ff4d4d"/>  <!-- red blip -->
+          <circle cx="21" cy="16" r="1.2" fill="#00e5a0"/>  <!-- green blip -->
+          <circle cx="13" cy="24" r="1.3" fill="#ffab00"/>  <!-- amber blip -->
+          <defs>
+            <linearGradient id="sweepGradH" x1="18" y1="18" x2="30" y2="6" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#00e5a0" stop-opacity="0.5"/>
+              <stop offset="1" stop-color="#00e5a0" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <!-- Wordmark -->
+      <div id="header-wordmark">
+        <div id="header-pradar"><span class="t-p">P</span><span class="t-rest">Radar</span></div>
+        <div id="header-sub">PR REVIEW INTELLIGENCE</div>
+      </div>
+    </div>
+    <div id="scan-info" style="text-align:right;display:flex;align-items:center;gap:12px">
+      <div>
+        <div id="last-scan-text" style="font-size:10px;color:var(--text-dim)">LAST SCAN: —</div>
+        <div id="status-pill" class="nominal">
+          <div id="status-dot"></div>
+          <span id="status-text">NOMINAL</span>
+        </div>
+      </div>
+      <button id="btn-settings" onclick="openSettings()" title="Configure API keys">⚙</button>
+    </div>
+  </div>
+
+  <!-- ── Bento grid ────────────────────────────────── -->
+  <div id="main">
+
+    <!-- Left panel -->
+    <div id="panel-left">
+      <div class="panel-label">METRICS</div>
+
+      <div id="stats-grid">
+        <div class="stat-card">
+          <div class="stat-num" id="stat-open" style="color:var(--green)">—</div>
+          <div class="stat-label">OPEN</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="stat-stale" style="color:var(--amber)">—</div>
+          <div class="stat-label">STALE</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="stat-blocked" style="color:var(--red)">—</div>
+          <div class="stat-label">CRITICAL</div>
+        </div>
+      </div>
+
+      <!-- Health score bar -->
+      <div id="health-card">
+        <div id="health-grade" class="grade-A">—</div>
+        <div id="health-score-bar"><div id="health-score-fill"></div></div>
+        <div id="health-msg">Run a scan to compute health</div>
+      </div>
+
+      <div id="repos-section">
+        <div id="repos-label">MONITORED REPOS</div>
+        <div id="repos-list">
+          <div style="font-size:10px;color:var(--text-faint)">awaiting scan...</div>
+        </div>
+      </div>
+
+      <div id="legend">
+        <div id="legend-label">URGENCY SCALE</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>&gt;24h waiting — critical</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>8–24h waiting — amber</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>&lt;8h waiting — healthy</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--text-dim)"></div>👤 unassigned reviewer</div>
+      </div>
+
+      <div id="actions">
+        <button class="btn btn-primary" id="btn-scan" onclick="runScan()">▶ RUN SCAN NOW</button>
+        <button class="btn btn-secondary" id="btn-notify" onclick="notifyTeam()" disabled>🔔 NOTIFY TEAM</button>
+        <button class="btn btn-secondary" id="btn-comment" onclick="commentRisks()" disabled>💬 COMMENT RISKS</button>
+        <button class="btn btn-secondary" id="btn-assign" onclick="autoAssign()" disabled>🎯 AUTO-ASSIGN</button>
+        <button class="btn btn-secondary" id="btn-issues" onclick="loadIssues()">📋 LOAD ISSUES</button>
+        <button class="btn btn-secondary" id="btn-slack" onclick="postToSlack()" disabled>⬆ POST TO SLACK</button>
+        <button class="btn btn-secondary" id="btn-notion" onclick="writeToNotion()" disabled>📝 WRITE TO NOTION</button>
+      </div>
+    </div>
+
+    <!-- Right panel — PR list -->
+    <div id="panel-right">
+      <div id="pr-header">
+        <div id="pr-header-label">PULL REQUEST QUEUE</div>
+        <div id="pr-filter">
+          <button class="filter-btn active" id="filter-all" onclick="applyFilter('all')">ALL</button>
+          <button class="filter-btn" id="filter-stale" onclick="applyFilter('stale')">STALE</button>
+          <button class="filter-btn" id="filter-crit" onclick="applyFilter('red')">CRITICAL</button>
+          <button class="filter-btn" id="filter-risk" onclick="applyFilter('risk')">🚨 RISKY</button>
+          <button class="filter-btn" id="filter-issues" onclick="applyFilter('issues')">📋 ISSUES</button>
+          <button class="filter-btn" id="filter-flow" onclick="applyFilter('flow')">📊 FLOW</button>
+        </div>
+      </div>
+      <div id="pr-list">
+        <div id="pr-empty">
+          <div id="pr-empty-icon">📡</div>
+          <div>Press RUN SCAN NOW to fetch PRs</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Bottom status bar -->
+  <div id="bottom-bar">
+    <div class="bar-item"><span class="bar-label">Avg wait</span><span class="bar-val" id="bar-avg">—</span></div>
+    <div class="bar-item"><span class="bar-label">Longest</span><span class="bar-val" id="bar-longest">—</span></div>
+    <div class="bar-item"><span class="bar-label">High risk</span><span class="bar-val" id="bar-highrisk">—</span></div>
+    <div class="bar-item" style="margin-left:auto"><span class="bar-label">Tools</span><span class="bar-val">13 registered</span></div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast"></div>
+
+  <script src="/sdk/construct.js"></script>
+  <script src="app.js"></script>
+  <!-- ⚙ Settings Overlay -->
+  <div id="settings-overlay" onclick="closeSettings()"></div>
+
+  <!-- ⚙ Settings Panel -->
+  <div id="settings-panel">
+    <div id="settings-header">
+      <div id="settings-title">⚙ PRadar Configuration</div>
+      <button id="settings-close" onclick="closeSettings()">✕</button>
+    </div>
+
+    <!-- Config status bar -->
+    <div id="cfg-status-bar">
+      <span style="font-size:9px;color:var(--text-faint);margin-right:4px">STATUS:</span>
+    </div>
+
+    <div id="settings-body">
+
+      <!-- ── GitHub Section ───────────────────────────── -->
+      <div class="settings-section" id="sec-github">
+        <div class="settings-section-header" onclick="toggleSection('sec-github')">
+          <span class="section-icon">🐙</span>
+          <span class="section-label">GitHub</span>
+          <span class="section-chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="field-group">
+            <div class="field-label">
+              Personal Access Token (PAT)
+              <a href="https://github.com/settings/personal-access-tokens" target="_blank">↗ Get it here</a>
+            </div>
+            <input class="cfg-input" type="password" id="cfg-GITHUB_TOKEN"
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="new-password">
+            <div class="field-hint">
+              Go to <strong>github.com → Settings → Developer settings → Personal access tokens</strong><br>
+              For Classic tokens: check <span class="scope-badge">repo</span> scope.<br>
+              For Fine-grained: set <span class="scope-badge">Pull requests: Read &amp; write</span> + <span class="scope-badge">Issues: Read &amp; write</span>.
+            </div>
+          </div>
+
+          <div class="field-group">
+            <div class="field-label">Repositories (comma-separated)</div>
+            <input class="cfg-input" type="text" id="cfg-REPOS"
+              placeholder="owner/repo1, owner/repo2">
+            <div class="field-hint">Format: <code>owner/repo</code> — e.g. <code>myuser/my-api,myorg/frontend</code></div>
+          </div>
+
+          <div class="field-group">
+            <div class="field-label">Team Members (for Auto-Assign)</div>
+            <input class="cfg-input" type="text" id="cfg-TEAM_MEMBERS"
+              placeholder="github-username1, github-username2">
+            <div class="field-hint">Comma-separated GitHub usernames. Each must have write access to the repo.</div>
+          </div>
+
+          <!-- Auto-Assign + Comment 403 Guide -->
+          <div class="guide-box">
+            <h4>🎯 Fix 403 "Resource not accessible" Errors</h4>
+            This error means your token lacks <strong>write permission</strong> for Pull Requests or Issues.
+            PRadar needs these to post comments, request reviewers, and draft code fixes.
+
+            <br><br><strong style="color:var(--green)">▶ Option A — Fine-grained PAT (most common)</strong>
+            <ol>
+              <li>Go to <strong>github.com → Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong></li>
+              <li>Click your token to edit it</li>
+              <li>Under <em>Repository permissions</em>:<br>
+                  • <span class="scope-badge">Pull requests</span> → <strong>Read &amp; write</strong><br>
+                  • <span class="scope-badge">Issues</span> → <strong>Read &amp; write</strong><br>
+                  • <span class="scope-badge">Contents</span> → <strong>Read-only</strong> (for diff access)</li>
+              <li>Scroll down → <strong>Update token</strong></li>
+            </ol>
+
+            <strong style="color:var(--green)">▶ Option B — Classic PAT</strong>
+            <ol>
+              <li>Go to <strong>Personal access tokens → Tokens (classic)</strong></li>
+              <li>Click your token → check the top-level <span class="scope-badge">repo</span> box (includes all sub-scopes)</li>
+              <li>Click <strong>Update token</strong></li>
+            </ol>
+
+            <strong style="color:var(--green)">▶ Option C — GitHub Actions <code>GITHUB_TOKEN</code></strong><br>
+            Add this block to your <code>.yml</code> workflow file:
+            <pre style="background:rgba(0,0,0,.3);padding:8px;border-radius:4px;margin:6px 0;font-size:9px;overflow-x:auto">permissions:
+  pull-requests: write
+  issues: write</pre>
+
+            After updating, re-paste your token above and click <strong>💾 Save &amp; Connect</strong>.<br>
+            <em>Until fixed, PRadar auto-falls back to Slack notification.</em>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Slack Section ─────────────────────────────── -->
+      <div class="settings-section" id="sec-slack">
+        <div class="settings-section-header" onclick="toggleSection('sec-slack')">
+          <span class="section-icon">💬</span>
+          <span class="section-label">Slack</span>
+          <span class="section-chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="field-group">
+            <div class="field-label">
+              Bot OAuth Token
+              <a href="https://api.slack.com/apps" target="_blank">↗ Slack Apps Dashboard</a>
+            </div>
+            <input class="cfg-input" type="password" id="cfg-SLACK_TOKEN"
+              placeholder="xoxb-xxxxxxxxxxxx-xxxxxxxxxxxx">
+            <div class="field-hint">
+              1. Go to <strong>api.slack.com/apps</strong> → Create New App → From scratch<br>
+              2. OAuth &amp; Permissions → Add scopes: <span class="scope-badge">chat:write</span><br>
+              3. Install to workspace → copy <em>Bot User OAuth Token</em><br>
+              4. Invite bot to channel: <code>/invite @YourBotName</code>
+            </div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">Channel ID</div>
+            <input class="cfg-input" type="text" id="cfg-SLACK_CHANNEL"
+              placeholder="C0XXXXXXXXX">
+            <div class="field-hint">
+              Right-click your Slack channel → View channel details → scroll to bottom to find Channel ID.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Notion Section ────────────────────────────── -->
+      <div class="settings-section" id="sec-notion">
+        <div class="settings-section-header" onclick="toggleSection('sec-notion')">
+          <span class="section-icon">📝</span>
+          <span class="section-label">Notion</span>
+          <span class="section-chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="field-group">
+            <div class="field-label">
+              Integration Token
+              <a href="https://www.notion.so/my-integrations" target="_blank">↗ My Integrations</a>
+            </div>
+            <input class="cfg-input" type="password" id="cfg-NOTION_KEY"
+              placeholder="secret_xxxxxxxxxxxxxxxxxxxx">
+            <div class="field-hint">
+              1. Go to <strong>notion.so/my-integrations</strong> → New integration<br>
+              2. Give it a name (e.g. PRadar) → Submit → copy the <em>Internal Integration Secret</em><br>
+              3. Open your target Notion page → ⋯ menu → Connections → add your integration
+            </div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">Page ID</div>
+            <input class="cfg-input" type="text" id="cfg-NOTION_PAGE_ID"
+              placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+            <div class="field-hint">
+              Open your Notion page in browser. The URL looks like:<br>
+              <code>notion.so/My-Page-<strong>abc123def456...</strong></code><br>
+              The 32-char string at the end is your Page ID.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── .dev.vars Generator ───────────────────────── -->
+      <div class="settings-section" id="sec-devvars">
+        <div class="settings-section-header" onclick="toggleSection('sec-devvars')">
+          <span class="section-icon">🗂</span>
+          <span class="section-label">Developer: Copy .dev.vars</span>
+          <span class="section-chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="field-hint" style="margin-bottom:8px">
+            For local development, paste this into <code>.dev.vars</code> in your project root, then restart <code>npm run dev</code>.
+          </div>
+          <textarea id="devvars-output" class="cfg-input" rows="7" readonly
+            style="font-size:10px;line-height:1.6;resize:none" placeholder="Fill in the fields above, then click Generate ↓"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="settings-btn settings-btn-secondary" style="flex:1" onclick="generateDevVars()">⟳ Generate</button>
+            <button class="settings-btn settings-btn-secondary" style="flex:1" onclick="copyDevVars()">📋 Copy</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div id="settings-footer">
+      <button class="settings-btn settings-btn-secondary" onclick="resetSettings()">🗑 Clear</button>
+      <button class="settings-btn settings-btn-primary" onclick="saveSettings()">💾 Save &amp; Connect</button>
+    </div>
+  </div>
+
+  <!-- 📡 Splash Screen -->
+  <div id="splash">
+    <div class="splash-logo-wrap">
+      <!-- Big radar icon -->
+      <div class="splash-icon">
+        <svg width="56" height="56" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="40" cy="40" r="36" stroke="#1e3a5f" stroke-width="1" fill="none"/>
+          <circle cx="40" cy="40" r="24" stroke="#1e3a5f" stroke-width="1" fill="none"/>
+          <circle cx="40" cy="40" r="12" stroke="#1e3a5f" stroke-width="1" fill="none"/>
+          <line x1="40" y1="4"  x2="40" y2="76" stroke="#162032" stroke-width="0.8"/>
+          <line x1="4"  y1="40" x2="76" y2="40" stroke="#162032" stroke-width="0.8"/>
+          <!-- Sweep -->
+          <g class="radar-sweep">
+            <line x1="40" y1="40" x2="68" y2="12" stroke="#00e5a0" stroke-width="2" stroke-linecap="round"/>
+            <path d="M40 40 L68 12 A40 40 0 0 0 40 4" fill="url(#sg)" opacity="0.3"/>
+          </g>
+          <!-- Blips -->
+          <circle cx="54" cy="26" r="2.8" fill="#ff4d4d"/>
+          <circle cx="47" cy="34" r="2.4" fill="#00e5a0"/>
+          <circle cx="28" cy="54" r="2.6" fill="#ffab00"/>
+          <defs>
+            <linearGradient id="sg" x1="40" y1="40" x2="68" y2="12" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#00e5a0" stop-opacity="0.6"/>
+              <stop offset="1" stop-color="#00e5a0" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <!-- Wordmark -->
+      <div class="splash-wordmark">
+        <div class="splash-title"><span class="t-p">P</span><span class="t-rest">Radar</span></div>
+        <div class="splash-subtitle">PR REVIEW INTELLIGENCE</div>
+      </div>
+    </div>
+    <div class="splash-bar-wrap"><div class="splash-bar-fill"></div></div>
+    <div class="splash-hint">INITIALISING CONSTRUCT AI AGENT &bull; LOADING</div>
+  </div>
+
+  <script>
+    // Dismiss splash after 2.4s (matches loading bar animation)
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const s = document.getElementById('splash');
+        if (s) s.classList.add('hidden');
+        setTimeout(() => s?.remove(), 700);
+      }, 2400);
+    });
+  </script>
+
+</body>
+</html>

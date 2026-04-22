@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/construct-computer/app-sdk/main/schemas/manifest.schema.json",
+  "name": "PRadar",
+  "description": "Surfaces your full PR review queue every morning. Flags stale PRs, posts digests to Slack and Notion before standup starts.",
+  "author": { "name": "YOUR NAME", "url": "https://github.com/YOUR_USERNAME" },
+  "owners": ["your-github-login"],
+  "icon": "icon.png",
+  "categories": ["developer-tools"],
+  "tags": ["github", "pull-requests", "standup", "slack", "notion", "devops"],
+  "ui": {
+    "entry": "ui/index.html",
+    "width": 900,
+    "height": 650
+  },
+  "auth": {
+    "schemes": [
+      {
+        "type": "api_key",
+        "label": "Connect GitHub + Slack + Notion",
+        "instructions": "Paste your GitHub PAT. Set NOTION_KEY, SLACK_TOKEN as Worker secrets.",
+        "fields": [
+          { "name": "github_token", "displayName": "GitHub Token", "type": "password", "required": true }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "network": ["api.github.com", "api.notion.com", "slack.com"],
+    "uses": {
+      "tools": ["notify.send"]
+    }
+  },
+  "tools": [
+    { "name": "list_open_prs", "description": "Fetch all open pull requests across configured repos" },
+    { "name": "compute_review_wait", "description": "Calculate how long each PR has been waiting for review" },
+    { "name": "flag_stale_prs", "description": "Flag PRs waiting over 24h or labelled blocked" },
+    { "name": "write_standup_entry", "description": "Write PR digest to today's Notion daily page" },
+    { "name": "post_digest", "description": "Post formatted digest to team Slack channel" },
+    { "name": "alert_critical_prs", "description": "Send platform desktop notification for critical PRs" },
+    { "name": "get_repo_health", "description": "Compute a 0-100 repo health score based on wait times" },
+    { "name": "snooze_pr", "description": "Snooze a PR to remove it from the stale list" },
+    { "name": "assess_pr_risk", "description": "Analyse PR code diffs and tag each PR with a risk score (low/medium/high) based on files changed" },
+    { "name": "post_risk_comment", "description": "Post a formatted risk-analysis comment directly on high-risk GitHub PRs" },
+    { "name": "auto_assign_prs", "description": "Auto-assign a reviewer to unassigned PRs that have been waiting too long" },
+    { "name": "list_open_issues", "description": "Fetch all open GitHub issues across monitored repos, sorted by age" },
+    { "name": "draft_code_fix", "description": "Generate an AI code fix for a GitHub issue using Construct LLM and post it as a comment" }
+  ]
+}
