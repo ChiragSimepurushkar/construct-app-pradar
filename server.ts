@@ -938,8 +938,8 @@ async function writeNotionEntry(env: any, prs: PR[], { stale, count }: { stale: 
   else console.log('[PRadar cron] Notion updated')
 }
 
-// ── In-memory user config (set from Settings UI, persists for worker lifetime) ──
-const _userConfig: Record<string, string> = {}
+// ── In-memory user config (keyed by IP for isolated public demos) ──
+const _userConfigs: Record<string, Record<string, string>> = {}
 const CONFIG_KEYS = ['GITHUB_TOKEN','REPOS','SLACK_TOKEN','SLACK_CHANNEL','NOTION_KEY','NOTION_PAGE_ID','TEAM_MEMBERS'] as const
 
 // ── Default export ─────────────────────────────────────
@@ -952,17 +952,35 @@ export default {
       return new Response(null, { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST', 'Access-Control-Allow-Headers': 'Content-Type' } })
     }
 
-    // ── POST /api/config — save user credentials from Settings UI ──
+    // Extract client IP for demo isolation
+    const ip = request.headers.get('cf-connecting-ip') || 'unknown'
+
+    // ── POST /api/config — save (or clear) user credentials from Settings UI ──
     if (request.method === 'POST' && url.pathname === '/api/config') {
       try {
         const body = await request.json() as Record<string, string>
+
+        // Bug fix: client sends { __cleared: '1' } when localStorage is empty.
+        // This tells us the user has NO config — record a sentinel so we never
+        // fall back to the server's own env secrets for this visitor's IP.
+        if (body['__cleared'] === '1') {
+          _userConfigs[ip] = { __cleared: '1' }
+          return new Response(JSON.stringify({ ok: true, saved: 0 }), {
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+          })
+        }
+
         let saved = 0
+        // Full replace: start with empty config for this IP
+        _userConfigs[ip] = {}
         for (const key of CONFIG_KEYS) {
           if (body[key] !== undefined && body[key] !== '') {
-            _userConfig[key] = body[key]
+            _userConfigs[ip][key] = body[key]
             saved++
           }
         }
+        // If nothing was saved, mark as cleared (prevents env fallback)
+        if (saved === 0) _userConfigs[ip] = { __cleared: '1' }
         return new Response(JSON.stringify({ ok: true, saved }), {
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
         })
@@ -974,8 +992,9 @@ export default {
     // ── GET /api/config — return which keys are configured (masked) ──
     if (request.method === 'GET' && url.pathname === '/api/config') {
       const status: Record<string, boolean> = {}
+      const userConf = _userConfigs[ip] || {}
       for (const key of CONFIG_KEYS) {
-        status[key] = !!((env as any)[key] || _userConfig[key])
+        status[key] = !!((env as any)[key] || userConf[key])
       }
       return new Response(JSON.stringify(status), {
         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
@@ -983,7 +1002,23 @@ export default {
     }
 
     // ── All other requests: merge env + user config, inject into x-construct-env ──
-    const merged = { ...env, ..._userConfig }
+    const userConf = _userConfigs[ip] ?? null
+
+    // Bug fix: if the user has the __cleared sentinel, they have NO credentials.
+    // Do NOT fall back to env secrets — use an empty config so their tool calls
+    // return proper 401/403 errors rather than using the owner's tokens.
+    const userHasCleared = userConf !== null && userConf['__cleared'] === '1'
+    const userHasRealConfig = userConf !== null && !userHasCleared
+
+    // First-time visitor (null) → use env as before (Construct platform auth flow)
+    // Cleared visitor → use empty env (no leaked tokens)
+    // Configured visitor → merge user config over env
+    const merged: Record<string, unknown> = userHasCleared
+      ? {}  // empty: no token fallback for new/unconfigured users
+      : userHasRealConfig
+        ? { ...env, ...userConf }  // user-supplied credentials win
+        : { ...env }               // first-time visit: use env (Construct platform)
+
     const envB64 = btoa(unescape(encodeURIComponent(JSON.stringify(merged))))
     const augmented = new Request(request, {
       headers: (() => {
@@ -996,7 +1031,6 @@ export default {
   },
 
   async scheduled(_event: ScheduledEvent, env: WorkerEnv, ctx: ExecutionContext) {
-    const merged = { ...env, ..._userConfig }
-    ctx.waitUntil(runDailyScan(merged as WorkerEnv))
+    ctx.waitUntil(runDailyScan(env))
   }
 }

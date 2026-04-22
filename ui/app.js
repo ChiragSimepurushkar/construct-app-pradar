@@ -668,6 +668,8 @@ window.renderFlowView = renderFlowView;
 
 const CFG_KEYS = ['GITHUB_TOKEN', 'REPOS', 'SLACK_TOKEN', 'SLACK_CHANNEL', 'NOTION_KEY', 'NOTION_PAGE_ID', 'TEAM_MEMBERS'];
 const STORAGE_KEY = 'pradar_config_v1';
+// Bug fix: was referenced but never defined — caused ReferenceError at startup
+const SCAN_CACHE_KEY = 'pradar_scan_cache_v1';
 
 function openSettings() {
   loadSettingsFromStorage();
@@ -731,21 +733,20 @@ async function saveSettings() {
 }
 window.saveSettings = saveSettings;
 
-// ── Check config status from server ───────────────────
-async function checkConfigStatus() {
+// ── Check config status from localStorage (source of truth) ──
+function checkConfigStatus() {
   const bar = el('cfg-status-bar');
   if (!bar) return;
   try {
-    const res = await fetch('/api/config');
-    const status = await res.json();
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     const chips = CFG_KEYS.map(key => {
-      const ok = status[key];
-      const label = key.replace('_', '\u00a0'); // non-breaking space
-      return `<span class="cfg-status-chip ${ok ? 'cfg-ok' : 'cfg-err'}">${ok ? '✓' : '✗'} ${label}</span>`;
+      const ok = !!(stored[key] && stored[key].trim());
+      const label = key.replace(/_/g, '\u00a0');
+      return `<span class="cfg-status-chip ${ok ? 'cfg-ok' : 'cfg-err'}">${ok ? '\u2713' : '\u2717'} ${label}</span>`;
     }).join('');
     bar.innerHTML = `<span style="font-size:9px;color:var(--text-faint);margin-right:4px">STATUS:</span>${chips}`;
   } catch (_) {
-    bar.innerHTML = `<span style="font-size:9px;color:var(--text-faint)">Status check unavailable in this environment</span>`;
+    bar.innerHTML = `<span style="font-size:9px;color:var(--text-faint)">Status unavailable</span>`;
   }
 }
 window.checkConfigStatus = checkConfigStatus;
@@ -801,14 +802,24 @@ function hasConfig() {
   } catch(_) { return false; }
 }
 
+// Bug fix: loadScanCache was called but never defined — always return false
+// (we deliberately don't restore stale cached scan data across sessions)
+function loadScanCache() { return false; }
+
 async function startup() {
+  // ?reset param — clears all localStorage and shows onboarding (for demos)
+  if (window.location.search.includes('reset')) {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(SCAN_CACHE_KEY);
+    // Remove the param from the URL without reloading
+    history.replaceState({}, '', window.location.pathname);
+  }
   await initSettings();
+  // Bug fix: ALWAYS show onboarding if no config — never auto-scan for unconfigured users
   if (!hasConfig()) {
-    // Brand new user — show welcome screen
     showOnboarding();
   } else {
-    // Returning user — restore cache or re-scan
-    if (!loadScanCache()) runScan();
+    runScan();
   }
 }
 
@@ -851,14 +862,20 @@ function copyDevVars() {
 window.copyDevVars = copyDevVars;
 
 function resetSettings() {
-  if (!confirm('Clear all saved PRadar credentials?')) return;
+  if (!confirm('Clear all saved PRadar credentials? This will reset to the welcome screen.')) return;
+  // Wipe both config and scan cache
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(SCAN_CACHE_KEY);
   CFG_KEYS.forEach(key => {
     const input = el('cfg-' + key);
     if (input) input.value = '';
   });
-  el('devvars-output').value = '';
-  showToast('🗑 Config cleared.', '');
+  _allPRs = []; _stalePRs = []; _riskyPRs = []; _issues = [];
+  _waitedJson = null; _riskJson = null;
+  el('devvars-output') && (el('devvars-output').value = '');
+  closeSettings();
+  showOnboarding();
+  showToast('🗑 Config cleared — fresh start!', '');
 }
 window.resetSettings = resetSettings;
 
@@ -866,28 +883,15 @@ window.resetSettings = resetSettings;
 async function initSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    const hasAny = Object.values(stored).some(v => v);
-    if (hasAny) {
-      await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(stored)
-      });
-    }
+    // Bug fix: send __cleared sentinel when no config exists so the server
+    // knows NOT to fall back to its own env vars (prevents token leakage to strangers)
+    const payload = Object.keys(stored).length > 0 ? stored : { __cleared: '1' };
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
   } catch (_) { }
 }
 
-// ── Auto-load on construct.ready() ────────────────────
-if (typeof construct !== 'undefined' && construct.ready) {
-  construct.ready(() => { initSettings().then(runScan); });
-} else {
-  document.addEventListener('construct:ready', runScan);
-  window.addEventListener('load', () => {
-    initSettings(); // always push stored config to server
-    if (typeof construct === 'undefined') {
-      console.warn('[PRadar] Construct SDK not found — running in standalone mode');
-      setStatus('nominal', 'DEV MODE');
-      el('last-scan-text').textContent = 'LAST SCAN: SDK required';
-    }
-  });
-}
+
